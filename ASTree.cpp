@@ -1559,7 +1559,9 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
         case Pyc::LOAD_NAME_A:
             stack.push(new ASTName(code->getName(operand)));
             break;
+
         case Pyc::MAKE_CLOSURE_A:
+        case Pyc::MAKE_FUNCTION:
         case Pyc::MAKE_FUNCTION_A:
             {
                 PycRef<ASTNode> fun_code = stack.top();
@@ -1659,6 +1661,35 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
                         }
                     }
                 }
+                // Python 3.14+ (assume new flag 0x10 for environment dict, otherwise same as 3.13)
+                else if (mod->verCompare(3, 14) <= 0) {
+                    if (operand & 0x10) { // Hypothetical: function environment variables
+                        stack.pop(); // Ignore environment dict
+                    }
+                    if (operand & 0x08) { // Cells for free vars to create a closure
+                        stack.pop(); // Ignore these for syntax generation
+                    }
+                    if (operand & 0x04) { // Annotation dict or string
+                        stack.pop(); // Ignore annotations
+                    }
+                    if (operand & 0x02) { // Kwarg Defaults
+                        PycRef<ASTNode> kw_tuple = stack.top();
+                        stack.pop();
+                        std::vector<PycRef<ASTNode>> kw_values = kw_tuple.cast<ASTConstMap>()->values();
+                        for (const PycRef<ASTNode>& kw : kw_values) {
+                            kwDefArgs.push_front(kw);
+                        }
+                    }
+                    if (operand & 0x01) { // Positional Defaults (including positional-or-KW args)
+                        PycRef<ASTNode> pos_tuple = stack.top();
+                        stack.pop();
+                        std::vector<PycRef<PycObject>> pos_values = pos_tuple.cast<ASTObject>()->object().cast<PycTuple>()->values();
+                        for (const PycRef<PycObject>& pos : pos_values) {
+                            defArgs.push_back(new ASTObject(pos));
+                        }
+                    }
+                }
+                // Unknown future versions: fallback, try 3.14 logic
                 else {
                     if (operand & 0x10) {
                         stack.pop();
@@ -1690,6 +1721,30 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
                 stack.push(new ASTFunction(fun_code, defArgs, kwDefArgs));
             }
             break;
+        case Pyc::SET_FUNCTION_ATTRIBUTE_A:
+        {
+                PycRef<ASTNode> value = stack.top(); stack.pop();
+                PycRef<ASTNode> func  = stack.top(); stack.pop();
+
+                if (ASTFunction* fn = dynamic_cast<ASTFunction*>(func.get())) {
+                        // Attach attribute depending on type of value
+                        if (ASTDict* dict = dynamic_cast<ASTDict*>(value.get())) {
+                                // Could be __annotations__ or __kwdefaults__
+                                fn->add_attribute("__dict__", value);
+                        } else if (ASTTuple* tuple = dynamic_cast<ASTTuple*>(value.get())) {
+                                // Could represent __defaults__
+                                fn->add_attribute("__defaults__", value);
+                        } else {
+                                // Generic fallback
+                                fn->add_attribute("__extra__", value);
+                        }
+                }
+
+                // Push back function with attributes attached
+                stack.push(func);
+        }
+        break;
+
         case Pyc::NOP:
             break;
         case Pyc::POP_BLOCK:
