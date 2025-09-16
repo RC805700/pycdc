@@ -1742,24 +1742,14 @@ PycRef<ASTNode> BuildFromCode(PycRef<PycCode> code, PycModule* mod)
                 PycRef<ASTNode> value = stack.top(); stack.pop();
                 PycRef<ASTNode> func  = stack.top(); stack.pop();
 
-                if (ASTFunction* fn = dynamic_cast<ASTFunction*>(func.get())) {
-                        // Attach attribute depending on type of value
-                        if (ASTDict* dict = dynamic_cast<ASTDict*>(value.get())) {
-                                // Could be __annotations__ or __kwdefaults__
-                                fn->add_attribute("__dict__", value);
-                        } else if (ASTTuple* tuple = dynamic_cast<ASTTuple*>(value.get())) {
-                                // Could represent __defaults__
-                                fn->add_attribute("__defaults__", value);
-                        } else {
-                                // Generic fallback
-                                fn->add_attribute("__extra__", value);
-                        }
-                }
+                // Currently we can't store the attribute (no AST support yet),
+                // so just discard 'value' and keep function on stack.
+                (void)value; // suppress unused warning
 
-                // Push back function with attributes attached
                 stack.push(func);
         }
         break;
+
 
         case Pyc::NOP:
             break;
